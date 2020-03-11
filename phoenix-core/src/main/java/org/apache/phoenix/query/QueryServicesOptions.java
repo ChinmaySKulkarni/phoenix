@@ -327,6 +327,12 @@ public class QueryServicesOptions {
 
     public static final String DEFAULT_CLIENT_CACHE_ENCODING = PTableRefFactory.Encoding.OBJECT.toString();
     public static final boolean DEFAULT_AUTO_UPGRADE_ENABLED = true;
+    // TODO: Revert below back to false
+    public static final boolean DEFAULT_MAX_CONCURRENT_CONN_EXTRA_LOGGING_ENABLED = true;
+    public static final int DEFAULT_MAX_CONCURRENT_CONN_LFU_CACHE_MAX_CAPACITY = 100;
+    public static final int DEFAULT_CONN_OPEN_TOO_LONG_WARN_THRESHOLD_MS = 60000;
+    // TODO: Revert below back to 1000
+    public static final int DEFAULT_MAX_CONCURRENT_CONN_EXTRA_LOGGING_SAMPLING_RATE = 1;
     public static final int DEFAULT_CLIENT_CONNECTION_CACHE_MAX_DURATION = 86400000;
     public static final int DEFAULT_COLUMN_ENCODED_BYTES = QualifierEncodingScheme.TWO_BYTE_QUALIFIERS.getSerializedMetadataValue();
     public static final String DEFAULT_IMMUTABLE_STORAGE_SCHEME = ImmutableStorageScheme.SINGLE_CELL_ARRAY_WITH_OFFSETS.toString();

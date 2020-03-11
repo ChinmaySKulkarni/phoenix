@@ -296,6 +296,15 @@ public interface QueryServices extends SQLCloseable {
 
     public static final String CLIENT_CACHE_ENCODING = "phoenix.table.client.cache.encoding";
     public static final String AUTO_UPGRADE_ENABLED = "phoenix.autoupgrade.enabled";
+    public static final String MAX_CONCURRENT_CONN_EXTRA_LOGGING_ENABLED =
+            "phoenix.max.concurrent.connection.extra.logging.enabled";
+    // Indicates that we want extra logging every xth time we hit the MAX_CONCURRENT_CONNECTIONS exception
+    public static final String MAX_CONCURRENT_CONN_EXTRA_LOGGING_SAMPLING_RATE =
+            "phoenix.max.concurrent.connection.extra.logging.sampling.rate";
+    public static final String MAX_CONCURRENT_CONN_LFU_CACHE_MAX_CAPACITY =
+            "phoenix.max.concurrent.connection.extra.logging.lfu.cache.max.capacity";
+    public static final String CONN_OPEN_TOO_LONG_WARN_THRESHOLD_MS =
+            "phoenix.max.concurrent.connection.extra.logging.conn.open.too.long.warn.threshold.ms";
 
     public static final String CLIENT_CONNECTION_CACHE_MAX_DURATION_MILLISECONDS =
         "phoenix.client.connection.max.duration";

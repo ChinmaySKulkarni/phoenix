@@ -21,6 +21,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 import static java.util.Collections.emptyMap;
 import static org.apache.phoenix.monitoring.GlobalClientMetrics.GLOBAL_OPEN_PHOENIX_CONNECTIONS;
 import static org.apache.phoenix.monitoring.GlobalClientMetrics.GLOBAL_PHOENIX_CONNECTIONS_ATTEMPTED_COUNTER;
+import static org.apache.phoenix.query.QueryServices.MAX_CONCURRENT_CONN_EXTRA_LOGGING_ENABLED;
 
 import java.io.EOFException;
 import java.io.IOException;
@@ -53,6 +54,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.concurrent.LinkedBlockingQueue;
 
@@ -171,6 +173,7 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
     private boolean isRunningUpgrade;
     private LogLevel logLevel;
     private Double logSamplingRate;
+    private final UUID uniqueID;
 
     static {
         Tracing.addTraceMetricsSource();
@@ -377,6 +380,7 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
         this.metaData = metaData;
         this.metaData.pruneTables(pruner);
         this.metaData.pruneFunctions(pruner);
+        this.uniqueID = UUID.randomUUID();
         this.services.addConnection(this);
 
         // setup tracing, if its enabled
@@ -834,6 +838,10 @@ public class PhoenixConnection implements Connection, MetaDataMutated, SQLClosea
     public DatabaseMetaData getMetaData() throws SQLException {
         checkOpen();
         return new PhoenixDatabaseMetaData(this);
+    }
+
+    public UUID getUniqueID() {
+        return this.uniqueID;
     }
 
     @Override

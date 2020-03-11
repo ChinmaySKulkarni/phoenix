@@ -59,7 +59,10 @@ import static org.apache.phoenix.monitoring.GlobalClientMetrics.GLOBAL_HCONNECTI
 import static org.apache.phoenix.monitoring.GlobalClientMetrics.GLOBAL_PHOENIX_CONNECTIONS_THROTTLED_COUNTER;
 import static org.apache.phoenix.monitoring.GlobalClientMetrics.GLOBAL_QUERY_SERVICES_COUNTER;
 import static org.apache.phoenix.query.QueryConstants.DEFAULT_COLUMN_FAMILY;
+import static org.apache.phoenix.query.QueryServicesOptions.DEFAULT_CONN_OPEN_TOO_LONG_WARN_THRESHOLD_MS;
 import static org.apache.phoenix.query.QueryServicesOptions.DEFAULT_DROP_METADATA;
+import static org.apache.phoenix.query.QueryServicesOptions.DEFAULT_MAX_CONCURRENT_CONN_EXTRA_LOGGING_SAMPLING_RATE;
+import static org.apache.phoenix.query.QueryServicesOptions.DEFAULT_MAX_CONCURRENT_CONN_LFU_CACHE_MAX_CAPACITY;
 import static org.apache.phoenix.query.QueryServicesOptions.DEFAULT_RENEW_LEASE_ENABLED;
 import static org.apache.phoenix.query.QueryServicesOptions.DEFAULT_RENEW_LEASE_THREAD_POOL_SIZE;
 import static org.apache.phoenix.query.QueryServicesOptions.DEFAULT_RENEW_LEASE_THRESHOLD_MILLISECONDS;
@@ -210,6 +213,8 @@ import org.apache.phoenix.log.QueryLoggerDisruptor;
 import org.apache.phoenix.parse.PFunction;
 import org.apache.phoenix.parse.PSchema;
 import org.apache.phoenix.protobuf.ProtobufUtil;
+import org.apache.phoenix.query.logging.MaxConcurrentConnectionInfo;
+import org.apache.phoenix.query.logging.StackTraceMappingInfo;
 import org.apache.phoenix.schema.ColumnAlreadyExistsException;
 import org.apache.phoenix.schema.ColumnFamilyNotFoundException;
 import org.apache.phoenix.schema.ConnectionProperty;
@@ -319,6 +324,10 @@ public class ConnectionQueryServicesImpl extends DelegateQueryServices implement
 
     @GuardedBy("connectionCountLock")
     private int connectionCount = 0;
+    @GuardedBy("connectionCountLock")
+    private int maxConcurrentConnExceptionCount = 0;
+    @GuardedBy("connectionCountLock")
+    private final MaxConcurrentConnectionInfo maxConcurrentConnectionInfo;
     private final Object connectionCountLock = new Object();
     private final boolean returnSequenceValues ;
 
@@ -351,6 +360,8 @@ public class ConnectionQueryServicesImpl extends DelegateQueryServices implement
     private final AtomicBoolean upgradeRequired = new AtomicBoolean(false);
     private final int maxConnectionsAllowed;
     private final boolean shouldThrottleNumConnections;
+    private final boolean enableMaxConcurrentConnExtraLogging;
+    private final int maxConcurrentConnExtraLogSamplingRate;
     public static final byte[] MUTEX_LOCKED = "MUTEX_LOCKED".getBytes();
 
     private static interface FeatureSupported {
@@ -437,6 +448,45 @@ public class ConnectionQueryServicesImpl extends DelegateQueryServices implement
         this.maxConnectionsAllowed = config.getInt(QueryServices.CLIENT_CONNECTION_MAX_ALLOWED_CONNECTIONS,
             QueryServicesOptions.DEFAULT_CLIENT_CONNECTION_MAX_ALLOWED_CONNECTIONS);
         this.shouldThrottleNumConnections = (maxConnectionsAllowed > 0);
+        this.enableMaxConcurrentConnExtraLogging =
+                config.getBoolean(MAX_CONCURRENT_CONN_EXTRA_LOGGING_ENABLED,
+                        QueryServicesOptions.DEFAULT_MAX_CONCURRENT_CONN_EXTRA_LOGGING_ENABLED);
+
+        int loggingLfuCacheMaxCap = config.getInt(MAX_CONCURRENT_CONN_LFU_CACHE_MAX_CAPACITY,
+                DEFAULT_MAX_CONCURRENT_CONN_LFU_CACHE_MAX_CAPACITY);
+        if (loggingLfuCacheMaxCap < 1) {
+            LOGGER.debug(MAX_CONCURRENT_CONN_LFU_CACHE_MAX_CAPACITY + " must be >= 1. Setting to "
+                    + "default value: " + DEFAULT_MAX_CONCURRENT_CONN_LFU_CACHE_MAX_CAPACITY);
+            loggingLfuCacheMaxCap = DEFAULT_MAX_CONCURRENT_CONN_LFU_CACHE_MAX_CAPACITY;
+        }
+
+        long connOpenTooLongWarnThresholdMs = config.getLong(CONN_OPEN_TOO_LONG_WARN_THRESHOLD_MS,
+                DEFAULT_CONN_OPEN_TOO_LONG_WARN_THRESHOLD_MS);
+        if (connOpenTooLongWarnThresholdMs < 1) {
+            LOGGER.debug(CONN_OPEN_TOO_LONG_WARN_THRESHOLD_MS + " must be >= 1. Setting to "
+                    + "default value: " + DEFAULT_CONN_OPEN_TOO_LONG_WARN_THRESHOLD_MS);
+            connOpenTooLongWarnThresholdMs = DEFAULT_CONN_OPEN_TOO_LONG_WARN_THRESHOLD_MS;
+        }
+
+        int maxConcurrentConnLoggingSampleRate =
+                config.getInt(MAX_CONCURRENT_CONN_EXTRA_LOGGING_SAMPLING_RATE,
+                        DEFAULT_MAX_CONCURRENT_CONN_EXTRA_LOGGING_SAMPLING_RATE);
+        if (maxConcurrentConnLoggingSampleRate < 1) {
+            LOGGER.debug(MAX_CONCURRENT_CONN_EXTRA_LOGGING_SAMPLING_RATE + " must be >= 1. "
+                    + "Setting to default value: " + DEFAULT_MAX_CONCURRENT_CONN_EXTRA_LOGGING_SAMPLING_RATE);
+            this.maxConcurrentConnExtraLogSamplingRate =
+                    DEFAULT_MAX_CONCURRENT_CONN_EXTRA_LOGGING_SAMPLING_RATE;
+        } else {
+            this.maxConcurrentConnExtraLogSamplingRate = maxConcurrentConnLoggingSampleRate;
+        }
+        if (this.enableMaxConcurrentConnExtraLogging) {
+            this.maxConcurrentConnectionInfo =
+                    new StackTraceMappingInfo(loggingLfuCacheMaxCap,
+                            this.maxConnectionsAllowed, connOpenTooLongWarnThresholdMs);
+        } else {
+            this.maxConcurrentConnectionInfo = null;
+        }
+
         if (!QueryUtil.isServerConnection(props)) {
             //Start queryDistruptor everytime as log level can be change at connection level as well, but we can avoid starting for server connections.
             try {
@@ -462,6 +512,16 @@ public class ConnectionQueryServicesImpl extends DelegateQueryServices implement
         if (this.connection.isClosed()) { // TODO: why the heck doesn't this throw above?
             throw new SQLExceptionInfo.Builder(SQLExceptionCode.CANNOT_ESTABLISH_CONNECTION).build().buildException();
         }
+    }
+
+    @VisibleForTesting
+    public MaxConcurrentConnectionInfo getMaxConcurrentConnectionInfo() {
+        return this.maxConcurrentConnectionInfo;
+    }
+
+    @VisibleForTesting
+    public int getMaxConcurrentConnExtraLogSamplingRate() {
+        return this.maxConcurrentConnExtraLogSamplingRate;
     }
 
     @Override
@@ -4959,10 +5019,22 @@ public class ConnectionQueryServicesImpl extends DelegateQueryServices implement
             synchronized (connectionCountLock) {
                 if (shouldThrottleNumConnections && connectionCount + 1 > maxConnectionsAllowed){
                     GLOBAL_PHOENIX_CONNECTIONS_THROTTLED_COUNTER.increment();
+                    if (this.enableMaxConcurrentConnExtraLogging) {
+                        this.maxConcurrentConnExceptionCount++;
+                        if (this.maxConcurrentConnExceptionCount %
+                                this.maxConcurrentConnExtraLogSamplingRate == 0) {
+                            this.maxConcurrentConnectionInfo.logInfoForAllOpenConnections();
+                            this.maxConcurrentConnectionInfo.clearAllState();
+                        }
+                    }
                     throw new SQLExceptionInfo.Builder(SQLExceptionCode.NEW_CONNECTION_THROTTLED).
                         build().buildException();
                 }
                 connectionCount++;
+                if (this.enableMaxConcurrentConnExtraLogging ) {
+                    this.maxConcurrentConnectionInfo.registerConnectionOpened(
+                            connection.getUniqueID(), System.currentTimeMillis());
+                }
             }
         }
         // If lease renewal isn't enabled, these are never cleaned up. Tracking when renewals
@@ -4974,6 +5046,7 @@ public class ConnectionQueryServicesImpl extends DelegateQueryServices implement
 
     @Override
     public void removeConnection(PhoenixConnection connection) throws SQLException {
+        boolean extraLoggingForConcurrentConnEnabled = this.enableMaxConcurrentConnExtraLogging;
         if (returnSequenceValues) {
             ConcurrentMap<SequenceKey,Sequence> formerSequenceMap = null;
             synchronized (connectionCountLock) {
@@ -4998,6 +5071,16 @@ public class ConnectionQueryServicesImpl extends DelegateQueryServices implement
                 if (connectionCount > 0) {
                     --connectionCount;
                 }
+            }
+        } else {
+            // We only want to do extra logging
+            // if (returnSequenceValues || shouldThrottleNumConnections) is true
+            extraLoggingForConcurrentConnEnabled = false;
+        }
+        if (extraLoggingForConcurrentConnEnabled) {
+            synchronized (connectionCountLock) {
+                this.maxConcurrentConnectionInfo.registerConnectionClosed(connection.getUniqueID(),
+                        System.currentTimeMillis());
             }
         }
     }
