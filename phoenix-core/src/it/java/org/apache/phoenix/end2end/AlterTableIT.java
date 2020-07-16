@@ -17,6 +17,7 @@
  */
 package org.apache.phoenix.end2end;
 
+import static org.apache.phoenix.exception.SQLExceptionCode.CANNOT_MUTATE_TABLE;
 import static org.apache.phoenix.jdbc.PhoenixDatabaseMetaData.COLUMN_FAMILY;
 import static org.apache.phoenix.jdbc.PhoenixDatabaseMetaData.COLUMN_NAME;
 import static org.apache.phoenix.jdbc.PhoenixDatabaseMetaData.COLUMN_QUALIFIER;
@@ -26,6 +27,7 @@ import static org.apache.phoenix.jdbc.PhoenixDatabaseMetaData.TABLE_SCHEM;
 import static org.apache.phoenix.jdbc.PhoenixDatabaseMetaData.TABLE_SEQ_NUM;
 import static org.apache.phoenix.query.QueryConstants.DEFAULT_COLUMN_FAMILY;
 import static org.apache.phoenix.query.QueryConstants.ENCODED_CQ_COUNTER_INITIAL_VALUE;
+import static org.apache.phoenix.schema.PTable.LinkType.EXCLUDED_COLUMN;
 import static org.apache.phoenix.util.TestUtil.TEST_PROPERTIES;
 import static org.apache.phoenix.util.TestUtil.closeConnection;
 import static org.apache.phoenix.util.TestUtil.closeStatement;
@@ -148,7 +150,7 @@ public class AlterTableIT extends ParallelStatsDisabledIT {
                         "DROP TABLE " + PhoenixDatabaseMetaData.SYSTEM_CATALOG);
                 fail("Should not be allowed to drop a system table");
             } catch (SQLException e) {
-                assertEquals(SQLExceptionCode.CANNOT_MUTATE_TABLE.getErrorCode(), e.getErrorCode());
+                assertEquals(CANNOT_MUTATE_TABLE.getErrorCode(), e.getErrorCode());
             }
         } finally {
             conn.close();
@@ -871,7 +873,7 @@ public class AlterTableIT extends ParallelStatsDisabledIT {
                 conn.commit();
                 fail("The alter table did not fail as expected");
             } catch (SQLException e) {
-                assertEquals(e.getErrorCode(), SQLExceptionCode.CANNOT_MUTATE_TABLE.getErrorCode());
+                assertEquals(e.getErrorCode(), CANNOT_MUTATE_TABLE.getErrorCode());
             }
 
             HTableDescriptor finalDesc = admin.getTableDescriptor(Bytes.toBytes(globalIndexTableName));
@@ -1224,6 +1226,47 @@ public class AlterTableIT extends ParallelStatsDisabledIT {
 	        assertSequenceNumber(schemaName, viewName, PTable.INITIAL_SEQ_NUM);
 	    }
 	}
+
+	@Test
+    public void testReAddingDroppedColumnToView() throws SQLException {
+        final String baseTableName = generateUniqueName();
+        final String viewName = generateUniqueName();
+        final String baseTableCreateDDL = String.format("CREATE TABLE %s"
+                + " (A INTEGER PRIMARY KEY, B INTEGER, C VARCHAR, D INTEGER)", baseTableName);
+        final String viewCreateDDL = String.format("CREATE VIEW %s (VA INTEGER, VB INTEGER) "
+                + "AS SELECT * FROM %s WHERE B > 200", viewName, baseTableName);
+        final String dropColFromViewDDL = String.format("ALTER VIEW %s DROP COLUMN C", viewName);
+
+        try (Connection conn = DriverManager.getConnection(getUrl());
+                Statement stmt = conn.createStatement()) {
+            stmt.execute(baseTableCreateDDL);
+            stmt.execute(viewCreateDDL);
+            stmt.execute(dropColFromViewDDL);
+        }
+        // Verify that this adds an EXCLUDED_COLUMN link
+        final String excludedColQuery = String.format("SELECT LINK_TYPE FROM SYSTEM.CATALOG"
+                + " WHERE TABLE_NAME='%s' AND COLUMN_NAME='C'", viewName);
+        try (Connection conn = DriverManager.getConnection(getUrl());
+                Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery(excludedColQuery);
+            rs.next();
+            assertEquals(EXCLUDED_COLUMN.getSerializedValue(), rs.getByte(1));
+            assertFalse(rs.next());
+        }
+
+        final String addColBackToViewDDL = String.format("ALTER VIEW %s ADD C VARCHAR", viewName);
+        // Try adding back the same column to the view
+        try (Connection conn = DriverManager.getConnection(getUrl());
+                Statement stmt = conn.createStatement()) {
+            try {
+                stmt.execute(addColBackToViewDDL);
+                fail();
+            } catch (SQLException sqlEx) {
+                assertEquals(CANNOT_MUTATE_TABLE.getErrorCode(), sqlEx.getErrorCode());
+            }
+
+        }
+    }
 	
 	@Test
     public void testAddingColumnsToTablesAndViews() throws Exception {

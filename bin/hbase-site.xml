@@ -24,4 +24,8 @@
     <name>hbase.regionserver.wal.codec</name>
     <value>org.apache.hadoop.hbase.regionserver.wal.IndexedWALEditCodec</value>
   </property>
+  <property>
+  	<name>phoenix.default.column.encoded.bytes.attrib</name>
+  	<value>0</value>
+  </property>
 </configuration>
