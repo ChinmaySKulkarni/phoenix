@@ -3678,7 +3678,7 @@ public class ConnectionQueryServicesImpl extends DelegateQueryServices implement
               MetaDataProtocol.MIN_SYSTEM_TABLE_TIMESTAMP_4_11_0,
               PhoenixDatabaseMetaData.USE_STATS_FOR_PARALLELIZATION + " "
                 + PBoolean.INSTANCE.getSqlTypeName());
-            addParentToChildLinks(metaConnection);
+            addParentToChildLinks(metaConnection, PhoenixDatabaseMetaData.SYSTEM_CATALOG);
         }
         if (currentServerSideTableTimeStamp < MetaDataProtocol.MIN_SYSTEM_TABLE_TIMESTAMP_4_14_0) {
             metaConnection = addColumnsIfNotExists(

@@ -578,7 +578,7 @@ public class UpgradeIT extends ParallelStatsDisabledIT {
             PhoenixConnection phxMetaConn = metaConn.unwrap(PhoenixConnection.class);
             phxMetaConn.setRunningUpgrade(true);
             // create the parent-> child links in SYSTEM.CATALOG
-            UpgradeUtil.addParentToChildLinks(phxMetaConn);
+            UpgradeUtil.addParentToChildLinks(phxMetaConn, PhoenixDatabaseMetaData.SYSTEM_CATALOG);
             // move the parent->child links to SYSTEM.CHILD_LINK
             UpgradeUtil.moveChildLinks(phxMetaConn);
             Set<String> actualChildLinkSet = getChildLinks(conn);

@@ -1091,7 +1091,7 @@ public class UpgradeUtil {
      * @param oldMetaConnection caller should take care of closing the passed connection appropriately
      * @throws SQLException
      */
-    public static void addParentToChildLinks(PhoenixConnection oldMetaConnection) throws SQLException {
+    public static void addParentToChildLinks(PhoenixConnection oldMetaConnection, String sysCatName) throws SQLException {
         PhoenixConnection metaConnection = null;
         try {
             // Need to use own connection with max time stamp to be able to read all data from SYSTEM.CATALOG 
@@ -1105,7 +1105,7 @@ public class UpgradeUtil {
             //     grand child view
             // Create parent table to child view CHILD link. As the PARENT link from child view to physical table is not there (it gets overwritten with the PHYSICAL link) use the PHYSICAL link instead.
             // We need to filter out grand child views PHYSICAL links while running this query
-            String createChildLink = "UPSERT INTO SYSTEM.CATALOG(TENANT_ID,TABLE_SCHEM,TABLE_NAME,COLUMN_NAME,COLUMN_FAMILY,LINK_TYPE)" +
+            String createChildLink = "UPSERT INTO " + sysCatName + "(TENANT_ID,TABLE_SCHEM,TABLE_NAME,COLUMN_NAME,COLUMN_FAMILY,LINK_TYPE)" +
                                         "SELECT PARENT_TENANT_ID," + 
                                         "       CASE INSTR(COLUMN_FAMILY,'.')" +
                                         "              WHEN 0 THEN NULL" + 
@@ -1132,7 +1132,7 @@ public class UpgradeUtil {
             metaConnection.createStatement().execute(createChildLink);
             metaConnection.commit();
             // Create child view to grand child view CHILD link using grand child view to child view PARENT link.
-            String createGrandChildLink = "UPSERT INTO SYSTEM.CATALOG(TENANT_ID,TABLE_SCHEM,TABLE_NAME,COLUMN_NAME,COLUMN_FAMILY,LINK_TYPE)" +
+            String createGrandChildLink = "UPSERT INTO " + sysCatName + "(TENANT_ID,TABLE_SCHEM,TABLE_NAME,COLUMN_NAME,COLUMN_FAMILY,LINK_TYPE)" +
                                         "SELECT PARENT_TENANT_ID," + 
                                         "       CASE INSTR(COLUMN_FAMILY,'.')" +
                                         "              WHEN 0 THEN NULL" + 
